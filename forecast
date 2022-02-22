@@ -1,0 +1,53 @@
+# modelの読み込み
+import pickle
+with open('model_fp.pkl', 'rb') as f:
+    model_fp = pickle.load(f)
+
+import requests
+import pprint
+import pandas as pd
+
+#t対象地の5日間/３時間ごとの気象データを取得
+#APIキー
+API_KEY = '5187a83b960ea70eb2849fc72f90d02a' # 取得したAPIキーを設定する
+#OpenWeatherMapのAPIのURL
+url = 'https://api.openweathermap.org/data/2.5/'
+#地域を指定
+place = 'hikone'
+#"天気予報"を取得forecast?
+data = requests.get(url+'forecast?q=' + place + '&lang=ja&appid=' + API_KEY).json()
+
+#5日間の予想雨量のdataflameを作成
+df = pd.DataFrame({'ds':[],'r':[]})
+#UTC(世界標準時)をJST(日本標準時)に変換
+from datetime import datetime, timedelta, timezone
+tz = timezone(timedelta(hours=+9))
+
+#JSONデータの'list'キーの値（リスト）にインデックス0から3時間ごとの予報データが順番に格納
+for i in data['list']:
+    #'dt_txt'で予報対象の日時を取得し、'str'に変換し-15詰めて時刻を落として日付だけに成形
+    ds = str(datetime.fromtimestamp(i['dt'],tz))[:-15]
+    #'rain'は値が無い場合をrainfal=0として値がある場合にはrainfalに代入
+    rainfal = 0
+    if 'rain' in i and '3h' in i['rain']:
+        rainfal = i['rain']['3h']
+    _df = pd.DataFrame({'ds':[ds],'r':[rainfal]})
+    df = pd.concat([df,_df])
+#DataFrameをgroupbyで集計,3hの平均を取る
+df_pred =  df.groupby('ds')['r'].mean()
+#dataflameのインデックスをリセットして整形
+df_pred = df_pred.reset_index()
+#3h-rの平均をとっているので、これを8倍して1dの値に変換
+df_pred['r'] = round(df_pred['r'] *8,1)
+
+forecast = model_fp.predict(df_pred)
+answer = pd.DataFrame({'予想日':[],'予想売上':[],'最小予想':[],'最大予想':[]})
+answer['予想日'] = forecast['ds']
+answer['予想売上'] = forecast['yhat'].round()
+answer['最小予想'] = forecast['yhat_lower'].round()
+answer['最大予想'] = forecast['yhat_upper'].round()
+answer['予想雨量'] = df_pred['r']
+
+import streamlit as st
+st.title('ランドリー売上予測')
+st.write(answer)
